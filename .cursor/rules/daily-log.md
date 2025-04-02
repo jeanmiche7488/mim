@@ -9,6 +9,7 @@
 - [x] Configuration de Supabase
 - [x] Gestion des variables d'environnement
 - [x] Création du schéma de la base de données
+- Documentation des règles Git et bonnes pratiques pour l'emplacement des commandes
 
 ## Validations
 - [x] Validation de la structure du projet
@@ -18,6 +19,7 @@
 - [x] Validation de la configuration Supabase
 - [x] Validation de la gestion des variables d'environnement
 - [x] Validation du schéma de la base de données
+- Validation des règles de workflow Git (emplacement des commandes)
 
 ## Prochaines Étapes
 - [ ] Application du schéma dans Supabase
@@ -32,4 +34,5 @@
 - Le schéma de la base de données a été mis à jour pour correspondre aux besoins spécifiques du projet, en tenant compte des fichiers d'entrée/sortie
 - Les tables principales sont : stores, products, stock, distributions et distribution_items
 - La sécurité est assurée via Row Level Security (RLS) pour toutes les tables
-- Les performances sont optimisées avec des index appropriés 
+- Les performances sont optimisées avec des index appropriés
+- Ajout d'une documentation claire sur l'exécution des commandes Git depuis la racine du projet 
