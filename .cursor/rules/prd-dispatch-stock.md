@@ -1,4 +1,74 @@
-# Règles de Développement - Outil de Dispatch de Stock
+# PRD - Outil de Dispatch de Stock
+
+## 1. Vue d'ensemble
+Application web pour la gestion et le dispatch de stock, permettant d'optimiser la distribution des produits entre différents points de vente.
+
+## 2. Fonctionnalités principales
+- Import de fichiers de stock
+- Calcul de distribution optimale
+- Interface utilisateur intuitive
+- Gestion des utilisateurs et des droits d'accès
+- Historique des distributions
+
+## 3. Architecture technique
+### Frontend
+- Next.js avec TypeScript
+- Tailwind CSS pour le styling
+- React Query pour la gestion des données
+- React Hook Form pour les formulaires
+
+### Backend
+- FastAPI (Python)
+- Supabase pour :
+  - Base de données PostgreSQL
+  - Authentification
+  - API REST automatique
+  - Temps réel pour les mises à jour
+  - Stockage des fichiers
+
+### Base de données (Supabase)
+- Tables principales :
+  - `users` : Gestion des utilisateurs
+  - `stock` : Données de stock
+  - `distributions` : Historique des distributions
+  - `stores` : Points de vente
+  - `products` : Catalogue produits
+
+## 4. Interface utilisateur
+- Design moderne et responsive
+- Navigation intuitive
+- Tableaux de bord interactifs
+- Formulaires d'import de fichiers
+- Visualisation des données
+
+## 5. Sécurité
+- Authentification via Supabase Auth
+- Gestion des rôles et permissions
+- Protection des routes API
+- Validation des données
+
+## 6. Performance
+- Optimisation des requêtes Supabase
+- Mise en cache des données
+- Chargement progressif
+- Pagination des résultats
+
+## 7. Déploiement
+- Frontend : Vercel
+- Backend : Serveur dédié
+- Base de données : Supabase Cloud
+
+## 8. Maintenance
+- Monitoring des performances
+- Logs d'erreurs
+- Sauvegardes automatiques
+- Mises à jour de sécurité
+
+## 9. Évolutions futures
+- Application mobile
+- API publique
+- Intégration avec d'autres systèmes
+- Analytics avancés
 
 ## 🎯 Objectif Principal
 Développement d'un outil de répartition de stock de chaussures entre entrepôt et magasins.
