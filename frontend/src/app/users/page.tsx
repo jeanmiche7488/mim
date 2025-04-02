@@ -5,20 +5,19 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import Navigation from '@/components/Navigation'
 
-interface Dispatch {
-  ean: string
-  reference: string
-  magasin: string
-  date_dispo: string
-  quantity: number
+interface User {
+  id: string
+  email: string
+  role: string
+  created_at: string
 }
 
-export default function HomePage() {
+export default function UsersPage() {
   const router = useRouter()
-  const [dispatches, setDispatches] = useState<Dispatch[]>([])
+  const [users, setUsers] = useState<User[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [showNewDispatchModal, setShowNewDispatchModal] = useState(false)
+  const [success, setSuccess] = useState<string | null>(null)
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -36,29 +35,46 @@ export default function HomePage() {
   }, [router])
 
   useEffect(() => {
-    const fetchDispatches = async () => {
+    const fetchUsers = async () => {
       try {
         const { data, error } = await supabase
-          .from('dispatch_output')
+          .from('users')
           .select('*')
-          .order('date_dispo', { ascending: false })
+          .order('created_at', { ascending: false })
 
         if (error) throw error
 
-        setDispatches(data || [])
+        setUsers(data || [])
       } catch (error) {
-        console.error('Erreur lors de la récupération des dispatches:', error)
-        setError('Erreur lors du chargement des dispatches')
+        console.error('Erreur lors de la récupération des utilisateurs:', error)
+        setError('Erreur lors du chargement des utilisateurs')
       } finally {
         setIsLoading(false)
       }
     }
 
-    fetchDispatches()
+    fetchUsers()
   }, [])
 
-  const handleNewDispatch = async () => {
-    router.push('/dispatch/new')
+  const handleRoleUpdate = async (userId: string, newRole: string) => {
+    try {
+      const { error } = await supabase
+        .from('users')
+        .update({ role: newRole })
+        .eq('id', userId)
+
+      if (error) throw error
+
+      setUsers(users.map(user => 
+        user.id === userId ? { ...user, role: newRole } : user
+      ))
+      setSuccess('Rôle mis à jour avec succès')
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (error) {
+      console.error('Erreur lors de la mise à jour du rôle:', error)
+      setError('Erreur lors de la mise à jour du rôle')
+      setTimeout(() => setError(null), 3000)
+    }
   }
 
   return (
@@ -68,13 +84,7 @@ export default function HomePage() {
         <div className="py-6">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex justify-between items-center">
-              <h1 className="text-3xl font-bold text-gray-900">Tableau de bord</h1>
-              <button
-                onClick={handleNewDispatch}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Nouveau dispatch
-              </button>
+              <h1 className="text-3xl font-bold text-gray-900">Gestion des utilisateurs</h1>
             </div>
 
             {error && (
@@ -92,6 +102,21 @@ export default function HomePage() {
               </div>
             )}
 
+            {success && (
+              <div className="mt-4 rounded-md bg-green-50 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <h3 className="text-sm font-medium text-green-800">{success}</h3>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mt-8">
               <div className="bg-white shadow sm:rounded-lg">
                 <div className="px-4 py-5 sm:p-6">
@@ -102,39 +127,40 @@ export default function HomePage() {
                           <thead className="bg-gray-50">
                             <tr>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                EAN
+                                Email
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Référence
+                                Rôle
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Magasin
+                                Date d'inscription
                               </th>
                               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Date de disponibilité
-                              </th>
-                              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Quantité
+                                Actions
                               </th>
                             </tr>
                           </thead>
                           <tbody className="bg-white divide-y divide-gray-200">
-                            {dispatches.map((dispatch, index) => (
-                              <tr key={index}>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                  {dispatch.ean}
+                            {users.map((user) => (
+                              <tr key={user.id}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                  {user.email}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {dispatch.reference}
+                                  {user.role}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {dispatch.magasin}
+                                  {new Date(user.created_at).toLocaleDateString()}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {new Date(dispatch.date_dispo).toLocaleDateString()}
-                                </td>
-                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                  {dispatch.quantity}
+                                  <select
+                                    value={user.role}
+                                    onChange={(e) => handleRoleUpdate(user.id, e.target.value)}
+                                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                                  >
+                                    <option value="user">Utilisateur</option>
+                                    <option value="admin">Administrateur</option>
+                                  </select>
                                 </td>
                               </tr>
                             ))}
@@ -151,4 +177,4 @@ export default function HomePage() {
       </div>
     </div>
   )
-}
+} 
