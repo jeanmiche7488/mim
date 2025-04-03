@@ -188,6 +188,18 @@ export default function StoresTable() {
 
   const handleAdd = async () => {
     try {
+      // Vérifier si le code entité existe déjà
+      const { data: existingStore } = await supabase
+        .from('stores')
+        .select('store_code')
+        .eq('store_code', newStore.store_code)
+        .single()
+
+      if (existingStore) {
+        alert('Un magasin avec ce code entité existe déjà')
+        return
+      }
+
       const { data, error } = await supabase
         .from('stores')
         .insert([newStore])
@@ -201,6 +213,51 @@ export default function StoresTable() {
       }
     } catch (error) {
       console.error('Erreur lors de l\'ajout:', error)
+    }
+  }
+
+  const handleDeleteDuplicates = async () => {
+    if (window.confirm('Êtes-vous sûr de vouloir supprimer les doublons ? Cette action conservera uniquement le plus ancien magasin pour chaque code entité.')) {
+      try {
+        // 1. Récupérer tous les magasins triés par code entité et date de création
+        const { data: allStores, error: fetchError } = await supabase
+          .from('stores')
+          .select('*')
+          .order('store_code')
+          .order('created_at')
+
+        if (fetchError) throw fetchError
+
+        // 2. Identifier les doublons (garder le premier de chaque groupe)
+        const seen = new Set()
+        const duplicates = allStores!.filter(store => {
+          if (seen.has(store.store_code)) {
+            return true
+          }
+          seen.add(store.store_code)
+          return false
+        })
+
+        if (duplicates.length === 0) {
+          alert('Aucun doublon trouvé')
+          return
+        }
+
+        // 3. Supprimer les doublons
+        const { error: deleteError } = await supabase
+          .from('stores')
+          .delete()
+          .in('id', duplicates.map(store => store.id))
+
+        if (deleteError) throw deleteError
+
+        // 4. Rafraîchir la liste
+        fetchStores()
+        alert(`${duplicates.length} doublon(s) supprimé(s)`)
+      } catch (error) {
+        console.error('Erreur lors de la suppression des doublons:', error)
+        alert('Une erreur est survenue lors de la suppression des doublons')
+      }
     }
   }
 
@@ -223,6 +280,13 @@ export default function StoresTable() {
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-800">Gestion des Magasins</h1>
         <div className="flex gap-2">
+          <button
+            onClick={handleDeleteDuplicates}
+            className="bg-yellow-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-yellow-700 transition-colors"
+          >
+            <TrashIcon className="h-5 w-5" />
+            Supprimer les doublons
+          </button>
           <button
             onClick={() => setIsImportModalOpen(true)}
             className="bg-green-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-green-700 transition-colors"
