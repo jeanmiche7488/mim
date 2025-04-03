@@ -273,7 +273,7 @@ export default function StoresTable() {
                   onClick={() => sortable && handleSort(key)}
                 >
                   <div className="flex items-center gap-1">
-                    {label}
+                  {label}
                     {sortable && sortConfig?.key === key && (
                       sortConfig.direction === 'asc' ? 
                         <ArrowUpIcon className="h-4 w-4" /> : 
@@ -318,15 +318,15 @@ export default function StoresTable() {
                         )}
                       </button>
                     </td>
-                    {MAIN_COLUMNS.map(({ key }) => (
+                {MAIN_COLUMNS.map(({ key }) => (
                       <td key={key} className="px-4 py-2 whitespace-nowrap text-sm text-gray-700">
-                        {store[key] || '-'}
-                      </td>
-                    ))}
+                    {store[key] || '-'}
+                  </td>
+                ))}
                     <td className="px-4 py-2 whitespace-nowrap text-right text-sm font-medium w-20">
                       <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => handleEdit(store)}
+                  <button
+                    onClick={() => handleEdit(store)}
                           className="text-blue-600 hover:text-blue-800 transition-colors"
                           title="Modifier"
                         >
@@ -338,10 +338,10 @@ export default function StoresTable() {
                           title="Supprimer"
                         >
                           <TrashIcon className="h-4 w-4" />
-                        </button>
+                  </button>
                       </div>
-                    </td>
-                  </tr>
+                </td>
+              </tr>
                   {expandedRows.has(store.id) && (
                     <tr>
                       <td colSpan={MAIN_COLUMNS.length + 3} className="px-4 py-3 bg-gray-50">
