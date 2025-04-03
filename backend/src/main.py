@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import stocks, dispatch, stores
+from config.supabase import supabase
 
 app = FastAPI(
     title="API de Dispatch de Stock",
@@ -16,11 +16,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Inclusion des routes
-app.include_router(stocks.router)
-app.include_router(dispatch.router)
-app.include_router(stores.router)
 
 @app.get("/")
 async def root():
