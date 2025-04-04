@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { PencilIcon, TrashIcon, PlusIcon, ChevronDownIcon, ChevronUpIcon, ArrowUpIcon, ArrowDownIcon } from '@heroicons/react/20/solid'
 import React from 'react'
+import { useDebounce } from '@/hooks/useDebounce'
 
 interface Product {
   id: string
@@ -29,6 +30,7 @@ const MAIN_COLUMNS = [
 ]
 
 const ITEMS_PER_PAGE = 50
+const ITEMS_PER_PAGE_OPTIONS = [10, 25, 50, 100]
 
 export default function ProductsTable() {
   const [products, setProducts] = useState<Product[]>([])
@@ -41,6 +43,57 @@ export default function ProductsTable() {
     segment: '',
     sous_famille: ''
   })
+  const [tempFilters, setTempFilters] = useState(filters)
+  const [uniqueSegments, setUniqueSegments] = useState<string[]>([])
+  const [uniqueSousFamilles, setUniqueSousFamilles] = useState<string[]>([])
+  
+  // Utiliser useDebounce pour les filtres
+  const debouncedFilters = useDebounce(tempFilters, 500)
+
+  // Récupérer les segments et sous-familles uniques
+  useEffect(() => {
+    const fetchUniqueValues = async () => {
+      try {
+        // Récupérer les segments uniques
+        const { data: segmentsData } = await supabase
+          .from('products')
+          .select('segment')
+          .not('segment', 'is', null)
+          .order('segment')
+
+        // Récupérer les sous-familles uniques
+        const { data: sousFamillesData } = await supabase
+          .from('products')
+          .select('sous_famille')
+          .not('sous_famille', 'is', null)
+          .order('sous_famille')
+
+        if (segmentsData) {
+          const segments = [...new Set(segmentsData.map(item => item.segment))].filter(Boolean)
+          setUniqueSegments(segments)
+        }
+
+        if (sousFamillesData) {
+          const sousFamilles = [...new Set(sousFamillesData.map(item => item.sous_famille))].filter(Boolean)
+          setUniqueSousFamilles(sousFamilles)
+        }
+      } catch (error) {
+        console.error('Erreur lors de la récupération des valeurs uniques:', error)
+      }
+    }
+
+    fetchUniqueValues()
+  }, [])
+
+  // Mettre à jour les filtres réels quand les filtres debounced changent
+  useEffect(() => {
+    setFilters(debouncedFilters)
+  }, [debouncedFilters])
+
+  const handleFilterChange = (key: keyof typeof filters, value: string) => {
+    setTempFilters(prev => ({ ...prev, [key]: value }))
+  }
+
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
@@ -57,10 +110,15 @@ export default function ProductsTable() {
   const [isSelectingAll, setIsSelectingAll] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [itemsPerPage, setItemsPerPage] = useState(ITEMS_PER_PAGE_OPTIONS[0])
+  const [selectAllStatus, setSelectAllStatus] = useState<{ loading: boolean; message: string }>({
+    loading: false,
+    message: ''
+  })
 
   useEffect(() => {
     fetchProducts()
-  }, [currentPage, filters])
+  }, [currentPage, filters, itemsPerPage])
 
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc'
@@ -80,45 +138,53 @@ export default function ProductsTable() {
     setProducts(sortedProducts)
   }
 
-  const handleSelectAll = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-      if (isSelectingAll) {
-        // Sélectionner tous les produits de la base
-        try {
-          setLoading(true)
-          const allIds = new Set<string>()
-          let hasMore = true
-          let page = 0
-          const pageSize = 1000
-
-          while (hasMore) {
-            const { data, error } = await supabase
-              .from('products')
-              .select('id')
-              .range(page * pageSize, (page + 1) * pageSize - 1)
-
-            if (error) throw error
-            
-            if (data.length === 0) {
-              hasMore = false
-            } else {
-              data.forEach(p => allIds.add(p.id))
-              page++
-            }
-          }
-
-          setSelectedRows(allIds)
-        } catch (error) {
-          console.error('Erreur lors de la sélection de tous les produits:', error)
-        } finally {
-          setLoading(false)
-        }
-      } else {
-        // Sélectionner uniquement la page courante
-        setSelectedRows(new Set(products.map(product => product.id)))
+  const handleSelectAll = async () => {
+    try {
+      // Si tous les produits sont déjà sélectionnés, on les désélectionne tous
+      if (selectedRows.size === totalCount) {
+        setSelectedRows(new Set())
+        setIsSelectingAll(false)
+        return
       }
-    } else {
-      setSelectedRows(new Set())
+
+      setIsSelectingAll(true)
+      setError(null)
+
+      // Sélectionner d'abord les produits visibles
+      const visibleProducts = products.map(product => product.id)
+      setSelectedRows(new Set(visibleProducts))
+
+      // Ensuite, récupérer tous les IDs en arrière-plan
+      const allIds = new Set<string>()
+      let offset = 0
+      const limit = 1000
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('products')
+          .select('id')
+          .range(offset, offset + limit - 1)
+
+        if (error) {
+          console.error('Erreur lors de la récupération des IDs:', error)
+          break
+        }
+
+        if (!data || data.length === 0) {
+          break
+        }
+
+        data.forEach(product => allIds.add(product.id))
+        offset += limit
+      }
+
+      // Mettre à jour la sélection avec tous les IDs
+      setSelectedRows(allIds)
+    } catch (error) {
+      console.error('Erreur lors de la sélection de tous les produits:', error)
+      setError('Une erreur est survenue lors de la sélection des produits')
+    } finally {
+      setIsSelectingAll(false)
     }
   }
 
@@ -258,26 +324,84 @@ export default function ProductsTable() {
           throw new Error(`${invalidProducts.length} produits invalides (données requises manquantes)`)
         }
 
-        setImportStatus({ loading: true, message: 'Import des produits dans la base de données...', error: false })
-        const { error } = await supabase
+        // Vérifier les doublons avant l'import
+        const { data: existingProducts } = await supabase
           .from('products')
-          .upsert(products, {
-            onConflict: 'reference',
-            ignoreDuplicates: false
-          })
+          .select('reference')
+          .in('reference', products.map(p => p.reference))
 
-        if (error) {
-          console.error('Erreur Supabase:', error)
-          throw new Error(`Erreur lors de l'import : ${error.message}`)
+        const existingReferences = new Set(existingProducts?.map(p => p.reference) || [])
+        const newProducts = products.filter(p => !existingReferences.has(p.reference))
+        const duplicateCount = products.length - newProducts.length
+
+        if (duplicateCount > 0) {
+          setImportStatus({ 
+            loading: true, 
+            message: `${duplicateCount} produit(s) déjà existant(s) seront ignoré(s). ${newProducts.length} nouveau(x) produit(s) seront importé(s).`, 
+            error: false 
+          })
         }
 
-        setImportStatus({ loading: true, message: 'Rafraîchissement de l\'affichage...', error: false })
-        await fetchProducts()
-        setImportStatus({ loading: false, message: `${products.length} produits importés avec succès`, error: false })
+        setImportStatus({ loading: true, message: 'Import des produits dans la base de données...', error: false })
+        if (newProducts.length > 0) {
+          // Vérifier d'abord si les produits existent déjà
+          const { data: existingProducts } = await supabase
+            .from('products')
+            .select('reference')
+            .in('reference', newProducts.map(p => p.reference))
+
+          const existingReferences = new Set(existingProducts?.map(p => p.reference) || [])
+          const productsToInsert = newProducts.filter(p => !existingReferences.has(p.reference))
+          const duplicateCount = newProducts.length - productsToInsert.length
+
+          if (productsToInsert.length > 0) {
+            const { error } = await supabase
+              .from('products')
+              .insert(productsToInsert)
+
+            if (error) {
+              console.error('Erreur Supabase:', error)
+              if (error.code === '23505') { // Code d'erreur pour violation de contrainte unique
+                setImportStatus({ 
+                  loading: false, 
+                  message: `Erreur : ${duplicateCount} produit(s) déjà existant(s) dans la base. Aucun nouveau produit n'a été importé.`, 
+                  error: true 
+                })
+              } else {
+                throw new Error(`Erreur lors de l'import : ${error.message}`)
+              }
+              return
+            }
+          }
+
+          setImportStatus({ loading: true, message: 'Rafraîchissement de l\'affichage...', error: false })
+          await fetchProducts()
+          
+          if (duplicateCount > 0) {
+            setImportStatus({ 
+              loading: false, 
+              message: `Import partiel : ${productsToInsert.length} nouveau(x) produit(s) importé(s), ${duplicateCount} produit(s) déjà existant(s) ignoré(s).`, 
+              error: true 
+            })
+          } else {
+            setImportStatus({ 
+              loading: false, 
+              message: `${productsToInsert.length} produit(s) importé(s) avec succès`, 
+              error: false 
+            })
+          }
+        } else {
+          setImportStatus({ 
+            loading: false, 
+            message: `Aucun nouveau produit à importer. Les ${products.length} produits du fichier existent déjà dans la base.`, 
+            error: true 
+          })
+        }
+        
         setTimeout(() => {
           setIsImportModalOpen(false)
           setImportStatus({ loading: false, message: '', error: false })
-        }, 2000)
+        }, 3000)
       } catch (error) {
         console.error('Erreur lors de l\'import:', error)
         setImportStatus({ 
@@ -313,13 +437,13 @@ export default function ProductsTable() {
         query = query.ilike('sous_famille', `%${filters.sous_famille}%`)
       }
 
-      // Ajouter la pagination
-      const start = (currentPage - 1) * ITEMS_PER_PAGE
-      const end = start + ITEMS_PER_PAGE - 1
-      
+      // Pagination
+      const from = (currentPage - 1) * itemsPerPage
+      const to = from + itemsPerPage - 1
+      query = query.range(from, to)
+
       const { data, error, count } = await query
         .order('reference')
-        .range(start, end)
 
       if (error) throw error
       
@@ -327,14 +451,10 @@ export default function ProductsTable() {
       setTotalCount(count || 0)
     } catch (error) {
       console.error('Erreur lors de la récupération des produits:', error)
+      setError('Une erreur est survenue lors de la récupération des produits')
     } finally {
       setLoading(false)
     }
-  }
-
-  const handleFilterChange = (key: keyof typeof filters, value: string) => {
-    setFilters(prev => ({ ...prev, [key]: value }))
-    setCurrentPage(1) // Réinitialiser à la première page lors d'un changement de filtre
   }
 
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
@@ -482,9 +602,19 @@ export default function ProductsTable() {
     setExpandedRows(newExpandedRows)
   }
 
-  // Ajouter la sélection par page
   const handleSelectPage = () => {
-    setSelectedRows(new Set(products.map(product => product.id)))
+    // Si tous les produits de la page sont déjà sélectionnés, on les désélectionne tous
+    const allPageProductsSelected = products.every(product => selectedRows.has(product.id))
+    if (allPageProductsSelected) {
+      const newSelectedRows = new Set(selectedRows)
+      products.forEach(product => newSelectedRows.delete(product.id))
+      setSelectedRows(newSelectedRows)
+    } else {
+      // Sinon, on sélectionne tous les produits de la page
+      const newSelectedRows = new Set(selectedRows)
+      products.forEach(product => newSelectedRows.add(product.id))
+      setSelectedRows(newSelectedRows)
+    }
   }
 
   if (loading) {
@@ -556,13 +686,41 @@ export default function ProductsTable() {
               <label className="text-xs font-medium text-gray-500 mb-1">
                 {label}
               </label>
-              <input
-                type="text"
-                value={filters[key as keyof typeof filters]}
-                onChange={(e) => handleFilterChange(key as keyof typeof filters, e.target.value)}
-                placeholder={`Filtrer par ${label.toLowerCase()}`}
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-              />
+              {key === 'segment' ? (
+                <select
+                  value={tempFilters.segment}
+                  onChange={(e) => handleFilterChange('segment', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900"
+                >
+                  <option value="" className="text-gray-400">Tous les segments</option>
+                  {uniqueSegments.map((segment) => (
+                    <option key={segment} value={segment}>
+                      {segment}
+                    </option>
+                  ))}
+                </select>
+              ) : key === 'sous_famille' ? (
+                <select
+                  value={tempFilters.sous_famille}
+                  onChange={(e) => handleFilterChange('sous_famille', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-900"
+                >
+                  <option value="" className="text-gray-400">Toutes les sous-familles</option>
+                  {uniqueSousFamilles.map((sousFamille) => (
+                    <option key={sousFamille} value={sousFamille}>
+                      {sousFamille}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={tempFilters[key as keyof typeof filters]}
+                  onChange={(e) => handleFilterChange(key as keyof typeof filters, e.target.value)}
+                  placeholder={`Filtrer par ${label.toLowerCase()}`}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-400"
+                />
+              )}
             </div>
           ))}
         </div>
@@ -572,29 +730,63 @@ export default function ProductsTable() {
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
-                onChange={handleSelectAll}
-                checked={selectedRows.size > 0 && selectedRows.size >= products.length}
+                checked={selectedRows.size > 0}
+                onChange={() => {
+                  if (selectedRows.size > 0) {
+                    setSelectedRows(new Set())
+                    setSelectAllStatus({ loading: false, message: '' })
+                  } else {
+                    handleSelectPage()
+                  }
+                }}
                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span className="text-sm text-gray-600">Sélection</span>
-            </div>
-            <div className="flex gap-2">
               <button
                 onClick={handleSelectPage}
-                className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
               >
                 Page courante
               </button>
               <button
-                onClick={() => {
-                  setIsSelectingAll(true)
-                  handleSelectAll({ target: { checked: true } } as any)
-                }}
-                className="text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                onClick={handleSelectAll}
+                disabled={isSelectingAll}
+                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors disabled:opacity-50"
               >
                 Tous les produits
               </button>
             </div>
+            {selectAllStatus.message && (
+              <div className="text-sm text-gray-600">
+                {selectAllStatus.loading ? (
+                  <div className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {selectAllStatus.message}
+                  </div>
+                ) : (
+                  selectAllStatus.message
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Afficher</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="rounded-md border-gray-300 text-sm font-medium text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {ITEMS_PER_PAGE_OPTIONS.map(option => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+            <span className="text-sm text-gray-600">produits par page</span>
           </div>
           {selectedRows.size > 0 && (
             <button
@@ -612,8 +804,14 @@ export default function ProductsTable() {
               <th className="px-4 py-2 w-8">
                 <input
                   type="checkbox"
-                  onChange={handleSelectAll}
                   checked={selectedRows.size === products.length && products.length > 0}
+                  onChange={() => {
+                    if (selectedRows.size > 0) {
+                      setSelectedRows(new Set())
+                    } else {
+                      handleSelectAll()
+                    }
+                  }}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
               </th>
@@ -756,92 +954,60 @@ export default function ProductsTable() {
           </tbody>
         </table>
 
-        {/* Pagination améliorée */}
-        <div className="px-4 py-3 flex items-center justify-between border-t bg-gray-50">
-          <div className="flex-1 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <p className="text-sm text-gray-700">
-              Affichage de <span className="font-medium">{((currentPage - 1) * ITEMS_PER_PAGE) + 1}</span> à{' '}
-              <span className="font-medium">{Math.min(currentPage * ITEMS_PER_PAGE, totalCount)}</span> sur{' '}
-              <span className="font-medium">{totalCount}</span> résultats
-            </p>
-            <div className="flex items-center gap-2">
+        {/* Pagination */}
+        <div className="px-4 py-3 flex items-center justify-between border-t border-gray-200">
+          <div className="flex-1 flex justify-between sm:hidden">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Précédent
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(totalCount / itemsPerPage)))}
+              disabled={currentPage === Math.ceil(totalCount / itemsPerPage)}
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Suivant
+            </button>
+          </div>
+          <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-700">
+                Affichage de <span className="font-medium">{Math.min((currentPage - 1) * itemsPerPage + 1, totalCount)}</span> à{' '}
+                <span className="font-medium">{Math.min(currentPage * itemsPerPage, totalCount)}</span> sur{' '}
+                <span className="font-medium">{totalCount}</span> produits
+              </p>
+            </div>
+            <div>
               <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
-                <button
-                  onClick={() => setCurrentPage(1)}
-                  disabled={currentPage === 1}
-                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100 disabled:opacity-50"
-                >
-                  <span className="sr-only">Première page</span>
-                  ⟪
-                </button>
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100 disabled:opacity-50"
-                >
-                  <span className="sr-only">Précédent</span>
-                  ⟨
-                </button>
-                {/* Pages */}
-                {[...Array(Math.min(5, totalPages))].map((_, i) => {
-                  let pageNumber
-                  if (totalPages <= 5) {
-                    pageNumber = i + 1
-                  } else if (currentPage <= 3) {
-                    pageNumber = i + 1
-                  } else if (currentPage >= totalPages - 2) {
-                    pageNumber = totalPages - 4 + i
-                  } else {
-                    pageNumber = currentPage - 2 + i
-                  }
-
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => setCurrentPage(pageNumber)}
-                      className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
-                        currentPage === pageNumber
-                          ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
-                          : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
-                      }`}
-                    >
-                      {pageNumber}
-                    </button>
-                  )
-                })}
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100 disabled:opacity-50"
-                >
-                  <span className="sr-only">Suivant</span>
-                  ⟩
-                </button>
-                <button
-                  onClick={() => setCurrentPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100 disabled:opacity-50"
-                >
-                  <span className="sr-only">Dernière page</span>
-                  ⟫
-                </button>
+                {Array.from({ length: Math.ceil(totalCount / itemsPerPage) }, (_, i) => i + 1)
+                  .filter(page => {
+                    if (page === 1 || page === Math.ceil(totalCount / itemsPerPage)) return true
+                    if (Math.abs(page - currentPage) <= 2) return true
+                    return false
+                  })
+                  .map((page, index, array) => (
+                    <React.Fragment key={page}>
+                      {index > 0 && array[index - 1] !== page - 1 && (
+                        <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                          ...
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setCurrentPage(page)}
+                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                          currentPage === page
+                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    </React.Fragment>
+                  ))}
               </nav>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">Aller à la page:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={totalPages}
-                  value={currentPage}
-                  onChange={(e) => {
-                    const page = parseInt(e.target.value)
-                    if (page >= 1 && page <= totalPages) {
-                      setCurrentPage(page)
-                    }
-                  }}
-                  className="w-16 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-                />
-              </div>
             </div>
           </div>
         </div>

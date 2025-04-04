@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { PencilIcon, TrashIcon, PlusIcon, ChevronDownIcon, ChevronUpIcon, ArrowUpIcon, ArrowDownIcon } from '@heroicons/react/20/solid'
 import React from 'react'
+import { useDebounce } from '@/hooks/useDebounce'
 
 interface Store {
   id: string
@@ -21,6 +22,9 @@ const MAIN_COLUMNS = [
   { key: 'brand', label: 'Enseigne', sortable: true }
 ]
 
+const ITEMS_PER_PAGE = 10
+const ITEMS_PER_PAGE_OPTIONS = [10, 25, 50, 100]
+
 export default function StoresTable() {
   const [stores, setStores] = useState<Store[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,10 +36,247 @@ export default function StoresTable() {
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalCount, setTotalCount] = useState(0)
+  const [filters, setFilters] = useState({
+    country: '',
+    entity_category: '',
+    store_code: '',
+    brand: ''
+  })
+  const [tempFilters, setTempFilters] = useState(filters)
+  const [importStatus, setImportStatus] = useState<{ loading: boolean; message: string; error: boolean }>({
+    loading: false,
+    message: '',
+    error: false
+  })
+  const [error, setError] = useState<string | null>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [isSelectingAll, setIsSelectingAll] = useState(false)
+  const [selectAllStatus, setSelectAllStatus] = useState<{ loading: boolean; message: string }>({
+    loading: false,
+    message: ''
+  })
+  const [itemsPerPage, setItemsPerPage] = useState(ITEMS_PER_PAGE_OPTIONS[0])
+
+  // Utiliser useDebounce pour les filtres
+  const debouncedFilters = useDebounce(tempFilters, 500)
+
+  // Mettre à jour les filtres réels quand les filtres debounced changent
+  useEffect(() => {
+    setFilters(debouncedFilters)
+  }, [debouncedFilters])
+
+  const handleFilterChange = (key: keyof typeof filters, value: string) => {
+    setTempFilters(prev => ({ ...prev, [key]: value }))
+    setCurrentPage(1)
+  }
 
   useEffect(() => {
     fetchStores()
-  }, [])
+  }, [currentPage, filters, itemsPerPage])
+
+  const fetchStores = async () => {
+    try {
+      setLoading(true)
+      let query = supabase
+        .from('stores')
+        .select('*', { count: 'exact' })
+
+      // Appliquer les filtres
+      if (filters.country) {
+        query = query.ilike('country', `%${filters.country}%`)
+      }
+      if (filters.entity_category) {
+        query = query.ilike('entity_category', `%${filters.entity_category}%`)
+      }
+      if (filters.store_code) {
+        query = query.ilike('store_code', `%${filters.store_code}%`)
+      }
+      if (filters.brand) {
+        query = query.ilike('brand', `%${filters.brand}%`)
+      }
+
+      // Pagination
+      const from = (currentPage - 1) * itemsPerPage
+      const to = from + itemsPerPage - 1
+      query = query.range(from, to)
+
+      const { data, error, count } = await query
+
+      if (error) throw error
+
+      setStores(data || [])
+      setTotalCount(count || 0)
+    } catch (error) {
+      console.error('Erreur lors de la récupération des magasins:', error)
+      setError('Une erreur est survenue lors de la récupération des magasins')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleImportCSV = async (file: File) => {
+    setImportStatus({ loading: true, message: 'Lecture du fichier...', error: false })
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const text = e.target?.result as string
+        const rows = text.split('\n').map(row => row.split(';'))
+        const headers = rows[0].map(header => header.trim())
+        
+        setImportStatus({ loading: true, message: 'Vérification des en-têtes...', error: false })
+
+        // Vérification des en-têtes requis
+        const requiredHeaders = ['country', 'entity_category', 'store_code', 'brand']
+        const missingHeaders = requiredHeaders.filter(header => 
+          !headers.some(h => h.toLowerCase() === header.toLowerCase())
+        )
+
+        if (missingHeaders.length > 0) {
+          throw new Error(`En-têtes manquants dans le fichier CSV : ${missingHeaders.join(', ')}`)
+        }
+
+        const headerIndexes = {
+          country: headers.findIndex(h => h.toLowerCase() === 'country'),
+          entity_category: headers.findIndex(h => h.toLowerCase() === 'entity_category'),
+          store_code: headers.findIndex(h => h.toLowerCase() === 'store_code'),
+          brand: headers.findIndex(h => h.toLowerCase() === 'brand')
+        }
+
+        setImportStatus({ loading: true, message: 'Traitement des données...', error: false })
+        const stores = rows.slice(1)
+          .filter(row => row.length === headers.length && row.some(cell => cell.trim()))
+          .map(row => {
+            const store: any = {
+              country: row[headerIndexes.country]?.trim(),
+              entity_category: row[headerIndexes.entity_category]?.trim(),
+              store_code: row[headerIndexes.store_code]?.trim(),
+              brand: row[headerIndexes.brand]?.trim()
+            }
+            return store
+          })
+
+        setImportStatus({ loading: true, message: `Validation de ${stores.length} magasins...`, error: false })
+        const invalidStores = stores.filter(store => 
+          !store.country || !store.entity_category || !store.store_code || !store.brand
+        )
+
+        if (invalidStores.length > 0) {
+          throw new Error(`${invalidStores.length} magasins invalides (données requises manquantes)`)
+        }
+
+        // Vérifier les doublons avant l'import
+        const { data: existingStores } = await supabase
+          .from('stores')
+          .select('store_code')
+          .in('store_code', stores.map(s => s.store_code))
+
+        const existingCodes = new Set(existingStores?.map(s => s.store_code) || [])
+        const storesToInsert = stores.filter(s => !existingCodes.has(s.store_code))
+        const duplicateCount = stores.length - storesToInsert.length
+
+        if (duplicateCount > 0) {
+          setImportStatus({ 
+            loading: true, 
+            message: `${duplicateCount} magasin(s) déjà existant(s) seront ignoré(s). ${storesToInsert.length} nouveau(x) magasin(s) seront importé(s).`, 
+            error: false 
+          })
+        }
+
+        setImportStatus({ loading: true, message: 'Import des magasins dans la base de données...', error: false })
+        if (storesToInsert.length > 0) {
+          const { error } = await supabase
+            .from('stores')
+            .insert(storesToInsert)
+
+          if (error) {
+            console.error('Erreur Supabase:', error)
+            if (error.code === '23505') { // Code d'erreur pour violation de contrainte unique
+              setImportStatus({ 
+                loading: false, 
+                message: `Erreur : ${duplicateCount} magasin(s) déjà existant(s) dans la base. Aucun nouveau magasin n'a été importé.`, 
+                error: true 
+              })
+            } else {
+              throw new Error(`Erreur lors de l'import : ${error.message}`)
+            }
+            return
+          }
+        }
+
+        setImportStatus({ loading: true, message: 'Rafraîchissement de l\'affichage...', error: false })
+        await fetchStores()
+        
+        if (duplicateCount > 0) {
+          setImportStatus({ 
+            loading: false, 
+            message: `Import partiel : ${storesToInsert.length} nouveau(x) magasin(s) importé(s), ${duplicateCount} magasin(s) déjà existant(s) ignoré(s).`, 
+            error: true 
+          })
+        } else {
+          setImportStatus({ 
+            loading: false, 
+            message: `${storesToInsert.length} magasin(s) importé(s) avec succès`, 
+            error: false 
+          })
+        }
+        
+        setTimeout(() => {
+          setIsImportModalOpen(false)
+          setImportStatus({ loading: false, message: '', error: false })
+        }, 3000)
+      } catch (error) {
+        console.error('Erreur lors de l\'import:', error)
+        setImportStatus({ 
+          loading: false, 
+          message: error instanceof Error ? error.message : 'Une erreur est survenue lors de l\'import',
+          error: true 
+        })
+      }
+    }
+    reader.readAsText(file, 'ISO-8859-1')
+  }
+
+  const handleDeleteSelected = async () => {
+    if (selectedRows.size === 0) return
+    
+    if (window.confirm(`Êtes-vous sûr de vouloir supprimer ${selectedRows.size} magasin(s) ? Cette action est irréversible.`)) {
+      try {
+        const { error } = await supabase
+          .from('stores')
+          .delete()
+          .in('id', Array.from(selectedRows))
+
+        if (error) throw error
+        
+        setStores(stores.filter(store => !selectedRows.has(store.id)))
+        setSelectedRows(new Set())
+        await fetchStores()
+      } catch (error) {
+        console.error('Erreur lors de la suppression multiple:', error)
+        setError('Une erreur est survenue lors de la suppression des magasins')
+      }
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Êtes-vous sûr de vouloir supprimer ce magasin ? Cette action est irréversible.')) {
+      try {
+        const { error } = await supabase
+          .from('stores')
+          .delete()
+          .eq('id', id)
+
+        if (error) throw error
+        setStores(stores.filter(store => store.id !== id))
+        await fetchStores()
+      } catch (error) {
+        console.error('Erreur lors de la suppression:', error)
+        setError('Une erreur est survenue lors de la suppression du magasin')
+      }
+    }
+  }
 
   const handleSort = (key: string) => {
     let direction: 'asc' | 'desc' = 'asc'
@@ -55,11 +296,69 @@ export default function StoresTable() {
     setStores(sortedStores)
   }
 
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-      setSelectedRows(new Set(stores.map(store => store.id)))
+  const handleSelectPage = () => {
+    const pageStoreIds = stores.map(store => store.id)
+    const allPageStoresSelected = pageStoreIds.every(id => selectedRows.has(id))
+    
+    if (allPageStoresSelected) {
+      // Désélectionner les magasins de la page courante
+      const newSelectedRows = new Set(selectedRows)
+      pageStoreIds.forEach(id => newSelectedRows.delete(id))
+      setSelectedRows(newSelectedRows)
     } else {
+      // Sélectionner tous les magasins de la page courante
+      const newSelectedRows = new Set(selectedRows)
+      pageStoreIds.forEach(id => newSelectedRows.add(id))
+      setSelectedRows(newSelectedRows)
+    }
+  }
+
+  const handleSelectAll = async () => {
+    const allStoresSelected = selectedRows.size === totalCount
+    
+    if (allStoresSelected) {
+      // Désélectionner tous les magasins
       setSelectedRows(new Set())
+      setSelectAllStatus({ loading: false, message: '' })
+      return
+    }
+
+    setIsSelectingAll(true)
+    setSelectAllStatus({ loading: true, message: 'Sélection des magasins en cours...' })
+    
+    try {
+      // D'abord sélectionner les magasins visibles
+      const visibleStoreIds = stores.map(store => store.id)
+      setSelectedRows(new Set(visibleStoreIds))
+      
+      // Ensuite, récupérer tous les IDs de la base
+      let allStoreIds = new Set<string>(visibleStoreIds)
+      let offset = 0
+      const batchSize = 1000
+      
+      while (true) {
+        const { data, error } = await supabase
+          .from('stores')
+          .select('id')
+          .range(offset, offset + batchSize - 1)
+        
+        if (error) throw error
+        if (!data || data.length === 0) break
+        
+        data.forEach(store => allStoreIds.add(store.id))
+        offset += batchSize
+      }
+      
+      setSelectedRows(allStoreIds)
+      setSelectAllStatus({ loading: false, message: `Tous les magasins (${allStoreIds.size}) ont été sélectionnés` })
+    } catch (error) {
+      console.error('Erreur lors de la sélection de tous les magasins:', error)
+      setSelectAllStatus({ loading: false, message: 'Erreur lors de la sélection des magasins' })
+    } finally {
+      setIsSelectingAll(false)
+      setTimeout(() => {
+        setSelectAllStatus({ loading: false, message: '' })
+      }, 3000)
     }
   }
 
@@ -73,98 +372,9 @@ export default function StoresTable() {
     setSelectedRows(newSelectedRows)
   }
 
-  const handleDeleteSelected = async () => {
-    if (selectedRows.size === 0) return
-    
-    if (window.confirm(`Êtes-vous sûr de vouloir supprimer ${selectedRows.size} magasin(s) ?`)) {
-      try {
-        const { error } = await supabase
-          .from('stores')
-          .delete()
-          .in('id', Array.from(selectedRows))
-
-        if (error) throw error
-        
-        setStores(stores.filter(store => !selectedRows.has(store.id)))
-        setSelectedRows(new Set())
-      } catch (error) {
-        console.error('Erreur lors de la suppression multiple:', error)
-      }
-    }
-  }
-
-  const handleImportCSV = async (file: File) => {
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const text = e.target?.result as string
-        const rows = text.split('\n').map(row => row.split(','))
-        const headers = rows[0]
-        
-        const stores = rows.slice(1).map(row => {
-          const store: any = {}
-          headers.forEach((header, index) => {
-            store[header.trim()] = row[index]?.trim()
-          })
-          return store
-        })
-
-        const { error } = await supabase
-          .from('stores')
-          .insert(stores)
-
-        if (error) throw error
-        
-        fetchStores()
-        setIsImportModalOpen(false)
-      } catch (error) {
-        console.error('Erreur lors de l\'import:', error)
-      }
-    }
-    reader.readAsText(file)
-  }
-
-  const fetchStores = async () => {
-    try {
-      console.log('Début de la récupération des magasins...')
-      const { data, error } = await supabase
-        .from('stores')
-        .select('*')
-        .order('country')
-
-      if (error) {
-        console.error('Erreur Supabase:', error)
-        throw error
-      }
-      
-      console.log('Données reçues:', data)
-      setStores(data || [])
-    } catch (error) {
-      console.error('Erreur lors de la récupération des magasins:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleEdit = (store: Store) => {
     setSelectedStore(store)
     setIsModalOpen(true)
-  }
-
-  const handleDelete = async (id: string) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer ce magasin ?')) {
-      try {
-        const { error } = await supabase
-          .from('stores')
-          .delete()
-          .eq('id', id)
-
-        if (error) throw error
-        setStores(stores.filter(store => store.id !== id))
-      } catch (error) {
-        console.error('Erreur lors de la suppression:', error)
-      }
-    }
   }
 
   const handleSave = async () => {
@@ -305,7 +515,86 @@ export default function StoresTable() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mt-2">
-        <div className="flex justify-end p-2 border-b">
+        <div className="p-4 border-b border-gray-200 grid grid-cols-4 gap-4">
+          {MAIN_COLUMNS.map(({ key, label }) => (
+            <div key={key} className="flex flex-col">
+              <label className="text-xs font-medium text-gray-500 mb-1">
+                {label}
+              </label>
+              <input
+                type="text"
+                value={tempFilters[key as keyof typeof filters]}
+                onChange={(e) => handleFilterChange(key as keyof typeof filters, e.target.value)}
+                placeholder={`Filtrer par ${label.toLowerCase()}`}
+                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-400"
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex justify-between p-2 border-b">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={selectedRows.size > 0}
+                onChange={() => {
+                  if (selectedRows.size > 0) {
+                    setSelectedRows(new Set())
+                    setSelectAllStatus({ loading: false, message: '' })
+                  } else {
+                    handleSelectPage()
+                  }
+                }}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-600">Sélection</span>
+              <button
+                onClick={handleSelectPage}
+                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors"
+              >
+                Page courante
+              </button>
+              <button
+                onClick={handleSelectAll}
+                disabled={isSelectingAll}
+                className="px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors disabled:opacity-50"
+              >
+                Tous les magasins
+              </button>
+            </div>
+            {selectAllStatus.message && (
+              <div className="text-sm text-gray-600">
+                {selectAllStatus.loading ? (
+                  <div className="flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {selectAllStatus.message}
+                  </div>
+                ) : (
+                  selectAllStatus.message
+                )}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">Afficher</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value))
+                setCurrentPage(1)
+              }}
+              className="rounded-md border-gray-300 text-sm font-medium text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+            >
+              {ITEMS_PER_PAGE_OPTIONS.map(option => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+            <span className="text-sm text-gray-600">magasins par page</span>
+          </div>
           {selectedRows.size > 0 && (
             <button
               onClick={handleDeleteSelected}
@@ -322,9 +611,9 @@ export default function StoresTable() {
               <th className="px-4 py-2 w-8">
                 <input
                   type="checkbox"
-                  onChange={handleSelectAll}
                   checked={selectedRows.size === stores.length && stores.length > 0}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  disabled={isSelectingAll}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                 />
               </th>
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
@@ -429,6 +718,104 @@ export default function StoresTable() {
             )}
           </tbody>
         </table>
+
+        {/* Pagination */}
+        <div className="px-4 py-3 flex items-center justify-between border-t border-gray-200">
+          <div className="flex-1 flex justify-between sm:hidden">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Précédent
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(totalCount / itemsPerPage)))}
+              disabled={currentPage === Math.ceil(totalCount / itemsPerPage)}
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Suivant
+            </button>
+          </div>
+          <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-700">
+                Affichage de <span className="font-medium">{Math.min((currentPage - 1) * itemsPerPage + 1, totalCount)}</span> à{' '}
+                <span className="font-medium">{Math.min(currentPage * itemsPerPage, totalCount)}</span> sur{' '}
+                <span className="font-medium">{totalCount}</span> magasins
+              </p>
+            </div>
+            <div>
+              <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="sr-only">Première page</span>
+                  <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="sr-only">Précédent</span>
+                  <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                {Array.from({ length: Math.ceil(totalCount / itemsPerPage) }, (_, i) => i + 1)
+                  .filter(page => {
+                    if (page === 1 || page === Math.ceil(totalCount / itemsPerPage)) return true
+                    if (Math.abs(page - currentPage) <= 2) return true
+                    return false
+                  })
+                  .map((page, index, array) => (
+                    <React.Fragment key={page}>
+                      {index > 0 && array[index - 1] !== page - 1 && (
+                        <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                          ...
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setCurrentPage(page)}
+                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                          currentPage === page
+                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(totalCount / itemsPerPage)))}
+                  disabled={currentPage === Math.ceil(totalCount / itemsPerPage)}
+                  className="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="sr-only">Suivant</span>
+                  <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(Math.ceil(totalCount / itemsPerPage))}
+                  disabled={currentPage === Math.ceil(totalCount / itemsPerPage)}
+                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <span className="sr-only">Dernière page</span>
+                  <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </nav>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Modal d'import CSV */}
@@ -451,8 +838,30 @@ export default function StoresTable() {
                 type="file"
                 accept=".csv"
                 onChange={(e) => e.target.files?.[0] && handleImportCSV(e.target.files[0])}
-                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+                disabled={importStatus.loading}
+                className="block w-full text-sm text-gray-500
+                  file:mr-4 file:py-2 file:px-4
+                  file:rounded-md file:border-0
+                  file:text-sm file:font-semibold
+                  file:bg-indigo-50 file:text-indigo-700
+                  hover:file:bg-indigo-100
+                  disabled:opacity-50"
               />
+              {importStatus.message && (
+                <div className={`mt-4 p-4 rounded-md ${
+                  importStatus.error ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+                }`}>
+                  <div className="flex items-center">
+                    {importStatus.loading && (
+                      <svg className="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
+                    <p>{importStatus.message}</p>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="border-t p-4 flex justify-end gap-3">
               <button
