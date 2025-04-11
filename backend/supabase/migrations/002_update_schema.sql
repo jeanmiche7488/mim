@@ -70,6 +70,11 @@ CREATE POLICY "Les utilisateurs authentifiés peuvent créer des distributions"
     TO authenticated
     WITH CHECK (auth.uid() = created_by);
 
+CREATE POLICY "Les utilisateurs authentifiés peuvent supprimer leurs distributions"
+    ON distributions FOR DELETE
+    TO authenticated
+    USING (auth.uid() = created_by);
+
 CREATE POLICY "Les utilisateurs authentifiés peuvent voir les items de distribution"
     ON distribution_items FOR SELECT
     TO authenticated

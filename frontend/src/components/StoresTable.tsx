@@ -612,8 +612,16 @@ export default function StoresTable() {
                 <input
                   type="checkbox"
                   checked={selectedRows.size === stores.length && stores.length > 0}
+                  onChange={() => {
+                    if (selectedRows.size > 0) {
+                      setSelectedRows(new Set())
+                      setSelectAllStatus({ loading: false, message: '' })
+                    } else {
+                      handleSelectPage()
+                    }
+                  }}
                   disabled={isSelectingAll}
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
               </th>
               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">

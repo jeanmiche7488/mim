@@ -1,0 +1,1 @@
+export type DispatchStatus = 'draft' | 'created' | 'file_loaded' | 'max_shops_calculated' | 'distribution_completed'; 

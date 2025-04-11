@@ -46,6 +46,7 @@ Gestion des vagues de distribution entre magasins
 id: uuid (primary key)
 name: varchar(255)
 status: varchar(50) (default 'draft')
+target_revenue: decimal(10,2)
 created_by: uuid (foreign key -> auth.users.id)
 created_at: timestamp with time zone
 updated_at: timestamp with time zone
@@ -61,6 +62,24 @@ source_store_id: uuid (foreign key -> stores.id)
 target_store_id: uuid (foreign key -> stores.id)
 quantity: integer
 available_date: date
+created_at: timestamp with time zone
+updated_at: timestamp with time zone
+```
+
+### 6. `stock_to_dispatch` (Stock à distribuer)
+Stockage temporaire des produits à distribuer
+```sql
+id: uuid (primary key)
+distribution_id: uuid (foreign key -> distributions.id)
+product_id: uuid (foreign key -> products.id)
+reference: varchar(20)
+size: varchar(10)
+ean_code: varchar(13)
+designation: varchar(255)
+collection: varchar(100)
+segment: varchar(100)
+quantity: integer
+expedition_date: date
 created_at: timestamp with time zone
 updated_at: timestamp with time zone
 ```
@@ -94,6 +113,14 @@ updated_at: timestamp with time zone
 7. `distribution_items` -> `stores` (target) (Many-to-One)
    - Un magasin peut être la destination de plusieurs items
    - Chaque item a une seule destination
+
+8. `stock_to_dispatch` -> `distributions` (Many-to-One)
+   - Une distribution peut contenir plusieurs produits à distribuer
+   - Chaque produit est lié à une seule distribution
+
+9. `stock_to_dispatch` -> `products` (Many-to-One)
+   - Un produit peut apparaître dans plusieurs entrées de stock à distribuer
+   - Chaque entrée est liée à un seul produit
 
 ## Contraintes et Indexes
 
