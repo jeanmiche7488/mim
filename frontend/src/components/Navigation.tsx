@@ -2,6 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useUser } from '@auth0/nextjs-auth0/client'
 
 const navigation = [
   { name: 'Dispatches', href: '/dispatches', icon: (
@@ -37,11 +38,22 @@ const adminNavigation = [
 
 export default function Navigation() {
   const pathname = usePathname()
+  const { user } = useUser()
 
   return (
     <div className="fixed inset-y-0 left-0 w-64 bg-gray-800">
-      <div className="flex h-16 items-center justify-center">
+      <div className="flex h-16 items-center justify-between px-4">
         <h1 className="text-xl font-bold text-white">MIM</h1>
+        {user && (
+          <a
+            href="/api/auth/logout?returnTo=https://mim.localhost:3000/auth"
+            className="text-gray-300 hover:text-white"
+          >
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+          </a>
+        )}
       </div>
       <nav className="flex flex-col space-y-1 px-4">
         {navigation.map((item) => (

@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   basePath: '',
-  allowedDevOrigins: ['mim.localhost:3000'],
+  allowedDevOrigins: ['mim.localhost:3000', 'localhost:3000', '192.168.1.9:3000'],
   async rewrites() {
     return [
       {
@@ -37,7 +37,8 @@ const nextConfig = {
     AUTH0_ISSUER_BASE_URL: 'https://dev-zslagj0xnxsibjy8.us.auth0.com',
     AUTH0_CLIENT_ID: 'Fg1H07Td1O3HHum2nCsYvh1DR01ai9b3',
     AUTH0_CLIENT_SECRET: 'EIaWSPAZaVcxSp5ihidV4zb6C9t6F-SegL5emRwhE2SblqAPmnjvF0UdIeeNWxGg',
-    AUTH0_REDIRECT_URI: 'https://mim.localhost:3000/api/auth/callback'
+    AUTH0_REDIRECT_URI: 'https://mim.localhost:3000/api/auth/callback',
+    AUTH0_POST_LOGOUT_REDIRECT_URI: 'https://mim.localhost:3000/auth'
   }
 }
 
