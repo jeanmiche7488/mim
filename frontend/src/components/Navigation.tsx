@@ -38,7 +38,13 @@ const adminNavigation = [
 
 export default function Navigation() {
   const pathname = usePathname()
-  const { user } = useUser()
+  const { user, isLoading, error } = useUser()
+
+  console.log('Navigation - User state:', { 
+    user: user ? 'User exists' : 'No user', 
+    isLoading, 
+    error: error ? error.message : 'No error' 
+  })
 
   return (
     <div className="fixed inset-y-0 left-0 w-64 bg-gray-800">
@@ -46,7 +52,7 @@ export default function Navigation() {
         <h1 className="text-xl font-bold text-white">MIM</h1>
         {user && (
           <a
-            href="/api/auth/logout?returnTo=https://mim.localhost:3000/auth"
+            href="/api/auth/logout?returnTo=/api/auth/login"
             className="text-gray-300 hover:text-white"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

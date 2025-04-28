@@ -20,6 +20,8 @@ app.prepare().then(() => {
       // Ajouter les headers nécessaires
       res.setHeader('x-forwarded-proto', 'https')
       res.setHeader('x-forwarded-host', 'mim.localhost:3000')
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
+      res.setHeader('Access-Control-Allow-Origin', 'https://mim.localhost:3000')
       
       await handle(req, res, parsedUrl)
     } catch (err) {

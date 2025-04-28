@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { useUser } from '@auth0/nextjs-auth0/client'
 import Navigation from '@/components/Navigation'
 import { Editor } from '@monaco-editor/react'
 
@@ -34,6 +35,7 @@ interface StockToDispatch {
 
 export default function ParametersPage() {
   const router = useRouter()
+  const { user, error: authError, isLoading: authLoading } = useUser()
   const [parameters, setParameters] = useState<Parameters[]>([])
   const [pythonScripts, setPythonScripts] = useState<PythonScript[]>([])
   const [editingParameter, setEditingParameter] = useState<Parameters | null>(null)
@@ -49,20 +51,18 @@ export default function ParametersPage() {
   )
 
   useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        router.push('/auth')
-      }
+    if (!authLoading && !user) {
+      router.push('/api/auth/login')
     }
-    checkSession()
-  }, [router])
+  }, [user, authLoading, router])
 
   const loadData = async () => {
-      try {
+    if (!user) return
+
+    try {
       // Récupérer tous les paramètres avec leurs stock_to_dispatch associés
       const { data: paramsData, error: paramsError } = await supabase
-          .from('parameters')
+        .from('parameters')
         .select('*, stock_to_dispatch(id, name, created_at)')
         .order('created_at', { ascending: false })
 
@@ -77,17 +77,19 @@ export default function ParametersPage() {
 
       if (scriptsError) throw scriptsError
       setPythonScripts(scriptsData || [])
-      } catch (error) {
+    } catch (error) {
       console.error('Erreur lors de la récupération des données:', error)
       setError('Erreur lors du chargement des données')
-      } finally {
-        setIsLoading(false)
-      }
+    } finally {
+      setIsLoading(false)
     }
+  }
 
   useEffect(() => {
-    loadData()
-  }, [])
+    if (user) {
+      loadData()
+    }
+  }, [user])
 
   const handleSaveParameter = async (parameter: Parameters) => {
     setIsSaving(true)
